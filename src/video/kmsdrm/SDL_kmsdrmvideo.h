@@ -78,7 +78,7 @@ typedef struct KMSDRM_FBInfo
 
 /* Helper functions */
 KMSDRM_FBInfo *KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo);
-SDL_bool KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *wdata, int timeout);
+SDL_bool KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *windata, int timeout);
 
 /****************************************************************************/
 /* SDL_VideoDevice functions declaration                                    */

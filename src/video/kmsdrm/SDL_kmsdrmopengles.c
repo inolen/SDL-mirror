@@ -58,9 +58,9 @@ int KMSDRM_GLES_SetSwapInterval(_THIS, int interval) {
 
 int
 KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
-    SDL_WindowData *wdata = ((SDL_WindowData *) window->driverdata);
-    SDL_DisplayData *displaydata = (SDL_DisplayData *) SDL_GetDisplayForWindow(window)->driverdata;
-    SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
+    SDL_WindowData *windata = ((SDL_WindowData *) window->driverdata);
+    SDL_DisplayData *dispdata = (SDL_DisplayData *) SDL_GetDisplayForWindow(window)->driverdata;
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     KMSDRM_FBInfo *fb_info;
     int ret;
 
@@ -70,45 +70,45 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
     if (_this->egl_data->egl_swapinterval == 1) {
         timeout = -1;
     }
-    if (!KMSDRM_WaitPageFlip(_this, wdata, timeout)) {
+    if (!KMSDRM_WaitPageFlip(_this, windata, timeout)) {
         return 0;
     }
 
     /* Release the previous front buffer */
-    if (wdata->curr_bo != NULL) {
-        KMSDRM_gbm_surface_release_buffer(wdata->gs, wdata->curr_bo);
-        /* SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Released GBM surface %p", (void *)wdata->curr_bo); */
-        wdata->curr_bo = NULL;
+    if (windata->curr_bo != NULL) {
+        KMSDRM_gbm_surface_release_buffer(windata->gs, windata->curr_bo);
+        /* SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Released GBM surface %p", (void *)windata->curr_bo); */
+        windata->curr_bo = NULL;
     }
 
-    wdata->curr_bo = wdata->next_bo;
+    windata->curr_bo = windata->next_bo;
 
     /* Make the current back buffer the next front buffer */
-    if (!(_this->egl_data->eglSwapBuffers(_this->egl_data->egl_display, wdata->egl_surface))) {
+    if (!(_this->egl_data->eglSwapBuffers(_this->egl_data->egl_display, windata->egl_surface))) {
         SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "eglSwapBuffers failed.");
         return 0;
     }
 
     /* Lock the next front buffer so it can't be allocated as a back buffer */
-    wdata->next_bo = KMSDRM_gbm_surface_lock_front_buffer(wdata->gs);
-    if (wdata->next_bo == NULL) {
+    windata->next_bo = KMSDRM_gbm_surface_lock_front_buffer(windata->gs);
+    if (windata->next_bo == NULL) {
         SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Could not lock GBM surface front buffer");
         return 0;
     /* } else {
-        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Locked GBM surface %p", (void *)wdata->next_bo); */
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Locked GBM surface %p", (void *)windata->next_bo); */
     }
 
-    fb_info = KMSDRM_FBFromBO(_this, wdata->next_bo);
+    fb_info = KMSDRM_FBFromBO(_this, windata->next_bo);
     if (fb_info == NULL) {
         return 0;
     }
 
-    if (wdata->curr_bo == NULL) {
+    if (windata->curr_bo == NULL) {
         /* On the first swap, immediately present the new front buffer. Before
            drmModePageFlip can be used the CRTC has to be configured to use
            the current connector and mode with drmModeSetCrtc */
-        ret = KMSDRM_drmModeSetCrtc(vdata->drm_fd, displaydata->crtc_id, fb_info->fb_id, 0,
-                                    0, &vdata->saved_conn_id, 1, &displaydata->cur_mode);
+        ret = KMSDRM_drmModeSetCrtc(viddata->drm_fd, dispdata->crtc_id, fb_info->fb_id, 0,
+                                    0, &viddata->saved_conn_id, 1, &dispdata->cur_mode);
 
         if (ret) {
           SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Could not configure CRTC");
@@ -116,14 +116,14 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
     } else {
         /* On subsequent swaps, queue the new front buffer to be flipped during
            the next vertical blank */
-        ret = KMSDRM_drmModePageFlip(vdata->drm_fd, displaydata->crtc_id, fb_info->fb_id,
-                                     DRM_MODE_PAGE_FLIP_EVENT, &wdata->waiting_for_flip);
-        /* SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "drmModePageFlip(%d, %u, %u, DRM_MODE_PAGE_FLIP_EVENT, &wdata->waiting_for_flip)",
-            vdata->drm_fd, displaydata->crtc_id, fb_info->fb_id); */
+        ret = KMSDRM_drmModePageFlip(viddata->drm_fd, dispdata->crtc_id, fb_info->fb_id,
+                                     DRM_MODE_PAGE_FLIP_EVENT, &windata->waiting_for_flip);
+        /* SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "drmModePageFlip(%d, %u, %u, DRM_MODE_PAGE_FLIP_EVENT, &windata->waiting_for_flip)",
+            viddata->drm_fd, displaydata->crtc_id, fb_info->fb_id); */
 
         if (_this->egl_data->egl_swapinterval == 1) {
             if (ret == 0) {
-                wdata->waiting_for_flip = SDL_TRUE;
+                windata->waiting_for_flip = SDL_TRUE;
             } else {
                 SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Could not queue pageflip: %d", ret);
             }
@@ -131,8 +131,8 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
 
         /* Wait immediately for vsync (as if we only had two buffers), for low input-lag scenarios.
            Run your SDL2 program with "SDL_KMSDRM_DOUBLE_BUFFER=1 <program_name>" to enable this. */
-        if (_this->egl_data->egl_swapinterval == 1 && wdata->double_buffer) {
-            KMSDRM_WaitPageFlip(_this, wdata, -1);
+        if (_this->egl_data->egl_swapinterval == 1 && windata->double_buffer) {
+            KMSDRM_WaitPageFlip(_this, windata, -1);
         }
     }
 

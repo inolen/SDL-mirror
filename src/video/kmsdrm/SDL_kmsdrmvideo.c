@@ -155,7 +155,7 @@ static SDL_VideoDevice *
 KMSDRM_Create(int devindex)
 {
     SDL_VideoDevice *device;
-    SDL_VideoData *vdata;
+    SDL_VideoData *viddata;
 
     if (!devindex || (devindex > 99)) {
         devindex = get_driindex();
@@ -178,15 +178,15 @@ KMSDRM_Create(int devindex)
     }
 
     /* Initialize internal data */
-    vdata = (SDL_VideoData *) SDL_calloc(1, sizeof(SDL_VideoData));
-    if (vdata == NULL) {
+    viddata = (SDL_VideoData *) SDL_calloc(1, sizeof(SDL_VideoData));
+    if (viddata == NULL) {
         SDL_OutOfMemory();
         goto cleanup;
     }
-    vdata->devindex = devindex;
-    vdata->drm_fd = -1;
+    viddata->devindex = devindex;
+    viddata->drm_fd = -1;
 
-    device->driverdata = vdata;
+    device->driverdata = viddata;
 
     /* Setup amount of available displays and current display */
     device->num_displays = 0;
@@ -233,8 +233,8 @@ KMSDRM_Create(int devindex)
 cleanup:
     if (device != NULL)
         SDL_free(device);
-    if (vdata != NULL)
-        SDL_free(vdata);
+    if (viddata != NULL)
+        SDL_free(viddata);
     return NULL;
 }
 
@@ -262,7 +262,7 @@ KMSDRM_FBDestroyCallback(struct gbm_bo *bo, void *data)
 KMSDRM_FBInfo *
 KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
 {
-    SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
 
     /* Check for an existing framebuffer */
     KMSDRM_FBInfo *fb_info = (KMSDRM_FBInfo *)KMSDRM_gbm_bo_get_user_data(bo);
@@ -280,14 +280,14 @@ KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
         return NULL;
     }
 
-    fb_info->drm_fd = vdata->drm_fd;
+    fb_info->drm_fd = viddata->drm_fd;
 
     /* Create framebuffer object for the buffer */
     unsigned w = KMSDRM_gbm_bo_get_width(bo);
     unsigned h = KMSDRM_gbm_bo_get_height(bo);
     Uint32 stride = KMSDRM_gbm_bo_get_stride(bo);
     Uint32 handle = KMSDRM_gbm_bo_get_handle(bo).u32;
-    int ret = KMSDRM_drmModeAddFB(vdata->drm_fd, w, h, 24, 32, stride, handle,
+    int ret = KMSDRM_drmModeAddFB(viddata->drm_fd, w, h, 24, 32, stride, handle,
                                   &fb_info->fb_id);
     if (ret) {
       SDL_free(fb_info);
@@ -304,24 +304,24 @@ KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
 }
 
 SDL_bool
-KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *wdata, int timeout) {
-    SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
+KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *windata, int timeout) {
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
 
-    while (wdata->waiting_for_flip) {
-        vdata->drm_pollfd.revents = 0;
-        if (poll(&vdata->drm_pollfd, 1, timeout) < 0) {
+    while (windata->waiting_for_flip) {
+        viddata->drm_pollfd.revents = 0;
+        if (poll(&viddata->drm_pollfd, 1, timeout) < 0) {
             SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "DRM poll error");
             return SDL_FALSE;
         }
 
-        if (vdata->drm_pollfd.revents & (POLLHUP | POLLERR)) {
+        if (viddata->drm_pollfd.revents & (POLLHUP | POLLERR)) {
             SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "DRM poll hup or error");
             return SDL_FALSE;
         }
 
-        if (vdata->drm_pollfd.revents & POLLIN) {
-            /* Page flip? If so, drmHandleEvent will unset wdata->waiting_for_flip */
-            KMSDRM_drmHandleEvent(vdata->drm_fd, &vdata->drm_evctx);
+        if (viddata->drm_pollfd.revents & POLLIN) {
+            /* Page flip? If so, drmHandleEvent will unset windata->waiting_for_flip */
+            KMSDRM_drmHandleEvent(viddata->drm_fd, &viddata->drm_evctx);
         } else {
             /* Timed out and page flip didn't happen */
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Dropping frame while waiting_for_flip");
@@ -349,7 +349,7 @@ KMSDRM_VideoInit(_THIS)
     SDL_bool found;
     int ret = 0;
     char *devname;
-    SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     drmModeRes *resources = NULL;
     drmModeConnector *connector = NULL;
     drmModeEncoder *encoder = NULL;
@@ -357,8 +357,8 @@ KMSDRM_VideoInit(_THIS)
     SDL_VideoDisplay display;
 
     /* Allocate display internal data */
-    SDL_DisplayData *data = (SDL_DisplayData *) SDL_calloc(1, sizeof(SDL_DisplayData));
-    if (data == NULL) {
+    SDL_DisplayData *dispdata = (SDL_DisplayData *) SDL_calloc(1, sizeof(SDL_DisplayData));
+    if (dispdata == NULL) {
         return SDL_OutOfMemory();
     }
 
@@ -370,32 +370,32 @@ KMSDRM_VideoInit(_THIS)
         ret = SDL_OutOfMemory();
         goto cleanup;
     }
-    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opening device /dev/dri/card%d", vdata->devindex);
-    SDL_snprintf(devname, 16, "/dev/dri/card%d", vdata->devindex);
-    vdata->drm_fd = open(devname, O_RDWR | O_CLOEXEC);
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opening device /dev/dri/card%d", viddata->devindex);
+    SDL_snprintf(devname, 16, "/dev/dri/card%d", viddata->devindex);
+    viddata->drm_fd = open(devname, O_RDWR | O_CLOEXEC);
     SDL_free(devname);
 
-    if (vdata->drm_fd < 0) {
-        ret = SDL_SetError("Could not open /dev/dri/card%d.", vdata->devindex);
+    if (viddata->drm_fd < 0) {
+        ret = SDL_SetError("Could not open /dev/dri/card%d.", viddata->devindex);
         goto cleanup;
     }
-    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opened DRM FD (%d)", vdata->drm_fd);
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opened DRM FD (%d)", viddata->drm_fd);
 
-    vdata->gbm = KMSDRM_gbm_create_device(vdata->drm_fd);
-    if (vdata->gbm == NULL) {
+    viddata->gbm = KMSDRM_gbm_create_device(viddata->drm_fd);
+    if (viddata->gbm == NULL) {
         ret = SDL_SetError("Couldn't create gbm device.");
         goto cleanup;
     }
 
     /* Find the first available connector with modes */
-    resources = KMSDRM_drmModeGetResources(vdata->drm_fd);
+    resources = KMSDRM_drmModeGetResources(viddata->drm_fd);
     if (!resources) {
-        ret = SDL_SetError("drmModeGetResources(%d) failed", vdata->drm_fd);
+        ret = SDL_SetError("drmModeGetResources(%d) failed", viddata->drm_fd);
         goto cleanup;
     }
 
     for (i = 0; i < resources->count_connectors; i++) {
-        connector = KMSDRM_drmModeGetConnector(vdata->drm_fd, resources->connectors[i]);
+        connector = KMSDRM_drmModeGetConnector(viddata->drm_fd, resources->connectors[i]);
         if (connector == NULL)
             continue;
 
@@ -403,7 +403,7 @@ KMSDRM_VideoInit(_THIS)
             connector->count_modes > 0) {
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found connector %d with %d modes.",
                          connector->connector_id, connector->count_modes);
-            vdata->saved_conn_id = connector->connector_id;
+            viddata->saved_conn_id = connector->connector_id;
             break;
         }
 
@@ -419,18 +419,18 @@ KMSDRM_VideoInit(_THIS)
     found = SDL_FALSE;
 
     for (i = 0; i < resources->count_encoders; i++) {
-        encoder = KMSDRM_drmModeGetEncoder(vdata->drm_fd, resources->encoders[i]);
+        encoder = KMSDRM_drmModeGetEncoder(viddata->drm_fd, resources->encoders[i]);
 
         if (encoder == NULL)
             continue;
 
         if (encoder->encoder_id == connector->encoder_id) {
-            data->encoder_id = encoder->encoder_id;
+            dispdata->encoder_id = encoder->encoder_id;
             found = SDL_TRUE;
         } else {
             for (j = 0; j < connector->count_encoders; j++) {
                 if (connector->encoders[j] == encoder->encoder_id) {
-                    data->encoder_id = encoder->encoder_id;
+                    dispdata->encoder_id = encoder->encoder_id;
                     found = SDL_TRUE;
                     break;
                 }
@@ -438,7 +438,7 @@ KMSDRM_VideoInit(_THIS)
         }
 
         if (found == SDL_TRUE) {
-            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found encoder %d.", data->encoder_id);
+            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found encoder %d.", dispdata->encoder_id);
             break;
         }
 
@@ -451,45 +451,45 @@ KMSDRM_VideoInit(_THIS)
         goto cleanup;
     }
 
-    vdata->saved_crtc = KMSDRM_drmModeGetCrtc(vdata->drm_fd, encoder->crtc_id);
+    viddata->saved_crtc = KMSDRM_drmModeGetCrtc(viddata->drm_fd, encoder->crtc_id);
 
-    if (vdata->saved_crtc == NULL) {
+    if (viddata->saved_crtc == NULL) {
         for (i = 0; i < resources->count_crtcs; i++) {
             if (encoder->possible_crtcs & (1 << i)) {
                 encoder->crtc_id = resources->crtcs[i];
                 SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Set encoder's CRTC to %d.", encoder->crtc_id);
-                vdata->saved_crtc = KMSDRM_drmModeGetCrtc(vdata->drm_fd, encoder->crtc_id);
+                viddata->saved_crtc = KMSDRM_drmModeGetCrtc(viddata->drm_fd, encoder->crtc_id);
                 break;
             }
         }
     }
 
-    if (vdata->saved_crtc == NULL) {
+    if (viddata->saved_crtc == NULL) {
         ret = SDL_SetError("No CRTC found.");
         goto cleanup;
     }
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Saved crtc_id %u, fb_id %u, (%u,%u), %ux%u",
-                 vdata->saved_crtc->crtc_id, vdata->saved_crtc->buffer_id, vdata->saved_crtc->x,
-                 vdata->saved_crtc->y, vdata->saved_crtc->width, vdata->saved_crtc->height);
-    data->crtc_id = encoder->crtc_id;
-    data->cur_mode = vdata->saved_crtc->mode;
-    vdata->crtc_id = encoder->crtc_id;
+                 viddata->saved_crtc->crtc_id, viddata->saved_crtc->buffer_id, viddata->saved_crtc->x,
+                 viddata->saved_crtc->y, viddata->saved_crtc->width, viddata->saved_crtc->height);
+    dispdata->crtc_id = encoder->crtc_id;
+    dispdata->cur_mode = viddata->saved_crtc->mode;
+    viddata->crtc_id = encoder->crtc_id;
 
     // select default mode if this one is not valid
-    if (vdata->saved_crtc->mode_valid == 0) {
+    if (viddata->saved_crtc->mode_valid == 0) {
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
             "Current mode is invalid, selecting connector's mode #0.");
-        data->cur_mode = connector->modes[0];
+        dispdata->cur_mode = connector->modes[0];
     }
 
     SDL_zero(current_mode);
 
-    current_mode.w = data->cur_mode.hdisplay;
-    current_mode.h = data->cur_mode.vdisplay;
-    current_mode.refresh_rate = data->cur_mode.vrefresh;
+    current_mode.w = dispdata->cur_mode.hdisplay;
+    current_mode.h = dispdata->cur_mode.vdisplay;
+    current_mode.refresh_rate = dispdata->cur_mode.vrefresh;
 
     /* FIXME ?
-    drmModeFB *fb = drmModeGetFB(vdata->drm_fd, vdata->saved_crtc->buffer_id);
+    drmModeFB *fb = drmModeGetFB(viddata->drm_fd, viddata->saved_crtc->buffer_id);
     current_mode.format = drmToSDLPixelFormat(fb->bpp, fb->depth);
     drmModeFreeFB(fb);
     */
@@ -501,15 +501,15 @@ KMSDRM_VideoInit(_THIS)
     display.desktop_mode = current_mode;
     display.current_mode = current_mode;
 
-    display.driverdata = data;
+    display.driverdata = dispdata;
     /* SDL_VideoQuit will later SDL_free(display.driverdata) */
     SDL_AddVideoDisplay(&display);
 
     /* Setup page flip handler */
-    vdata->drm_pollfd.fd = vdata->drm_fd;
-    vdata->drm_pollfd.events = POLLIN;
-    vdata->drm_evctx.version = DRM_EVENT_CONTEXT_VERSION;
-    vdata->drm_evctx.page_flip_handler = KMSDRM_FlipHandler;
+    viddata->drm_pollfd.fd = viddata->drm_fd;
+    viddata->drm_pollfd.events = POLLIN;
+    viddata->drm_evctx.version = DRM_EVENT_CONTEXT_VERSION;
+    viddata->drm_evctx.page_flip_handler = KMSDRM_FlipHandler;
 
 #ifdef SDL_INPUT_LINUXEV
     SDL_EVDEV_Init();
@@ -529,18 +529,18 @@ cleanup:
 
     if (ret != 0) {
         /* Error (complete) cleanup */
-        SDL_free(data);
-        if(vdata->saved_crtc != NULL) {
-            KMSDRM_drmModeFreeCrtc(vdata->saved_crtc);
-            vdata->saved_crtc = NULL;
+        SDL_free(dispdata);
+        if(viddata->saved_crtc != NULL) {
+            KMSDRM_drmModeFreeCrtc(viddata->saved_crtc);
+            viddata->saved_crtc = NULL;
         }
-        if (vdata->gbm != NULL) {
-            KMSDRM_gbm_device_destroy(vdata->gbm);
-            vdata->gbm = NULL;
+        if (viddata->gbm != NULL) {
+            KMSDRM_gbm_device_destroy(viddata->gbm);
+            viddata->gbm = NULL;
         }
-        if (vdata->drm_fd >= 0) {
-            close(vdata->drm_fd);
-            vdata->drm_fd = -1;
+        if (viddata->drm_fd >= 0) {
+            close(viddata->drm_fd);
+            viddata->drm_fd = -1;
         }
     }
     return ret;
@@ -549,7 +549,7 @@ cleanup:
 void
 KMSDRM_VideoQuit(_THIS)
 {
-    SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
 
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "KMSDRM_VideoQuit()");
 
@@ -557,27 +557,27 @@ KMSDRM_VideoQuit(_THIS)
         SDL_GL_UnloadLibrary();
     }
 
-    if(vdata->saved_crtc != NULL) {
-        if(vdata->drm_fd >= 0 && vdata->saved_conn_id > 0) {
+    if(viddata->saved_crtc != NULL) {
+        if(viddata->drm_fd >= 0 && viddata->saved_conn_id > 0) {
             /* Restore saved CRTC settings */
-            drmModeCrtc *crtc = vdata->saved_crtc;
-            if(KMSDRM_drmModeSetCrtc(vdata->drm_fd, crtc->crtc_id, crtc->buffer_id,
-                                     crtc->x, crtc->y, &vdata->saved_conn_id, 1,
+            drmModeCrtc *crtc = viddata->saved_crtc;
+            if(KMSDRM_drmModeSetCrtc(viddata->drm_fd, crtc->crtc_id, crtc->buffer_id,
+                                     crtc->x, crtc->y, &viddata->saved_conn_id, 1,
                                      &crtc->mode) != 0) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Could not restore original CRTC mode");
             }
         }
-        KMSDRM_drmModeFreeCrtc(vdata->saved_crtc);
-        vdata->saved_crtc = NULL;
+        KMSDRM_drmModeFreeCrtc(viddata->saved_crtc);
+        viddata->saved_crtc = NULL;
     }
-    if (vdata->gbm != NULL) {
-        KMSDRM_gbm_device_destroy(vdata->gbm);
-        vdata->gbm = NULL;
+    if (viddata->gbm != NULL) {
+        KMSDRM_gbm_device_destroy(viddata->gbm);
+        viddata->gbm = NULL;
     }
-    if (vdata->drm_fd >= 0) {
-        close(vdata->drm_fd);
-        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Closed DRM FD %d", vdata->drm_fd);
-        vdata->drm_fd = -1;
+    if (viddata->drm_fd >= 0) {
+        close(viddata->drm_fd);
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Closed DRM FD %d", viddata->drm_fd);
+        viddata->drm_fd = -1;
     }
 #ifdef SDL_INPUT_LINUXEV
     SDL_EVDEV_Quit();
@@ -600,19 +600,19 @@ KMSDRM_SetDisplayMode(_THIS, SDL_VideoDisplay * display, SDL_DisplayMode * mode)
 int
 KMSDRM_CreateWindow(_THIS, SDL_Window * window)
 {
-    SDL_WindowData *wdata;
+    SDL_WindowData *windata;
     SDL_VideoDisplay *display;
-    SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     Uint32 surface_fmt, surface_flags;
 
     /* Allocate window internal data */
-    wdata = (SDL_WindowData *) SDL_calloc(1, sizeof(SDL_WindowData));
-    if (wdata == NULL) {
+    windata = (SDL_WindowData *) SDL_calloc(1, sizeof(SDL_WindowData));
+    if (windata == NULL) {
         SDL_OutOfMemory();
         goto error;
     }
 
-    wdata->waiting_for_flip = SDL_FALSE;
+    windata->waiting_for_flip = SDL_FALSE;
     display = SDL_GetDisplayForWindow(window);
 
     /* Windows have one size for now */
@@ -625,10 +625,10 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
     surface_fmt = GBM_FORMAT_XRGB8888;
     surface_flags = GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING;
 
-    if (!KMSDRM_gbm_device_is_format_supported(vdata->gbm, surface_fmt, surface_flags)) {
+    if (!KMSDRM_gbm_device_is_format_supported(viddata->gbm, surface_fmt, surface_flags)) {
         SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "GBM surface format not supported. Trying anyway.");
     }
-    wdata->gs = KMSDRM_gbm_surface_create(vdata->gbm, window->w, window->h, surface_fmt, surface_flags);
+    windata->gs = KMSDRM_gbm_surface_create(viddata->gbm, window->w, window->h, surface_fmt, surface_flags);
 
 #if SDL_VIDEO_OPENGL_EGL
     if (!_this->egl_data) {
@@ -637,22 +637,22 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
         }
     }
     SDL_EGL_SetRequiredVisualId(_this, surface_fmt);
-    wdata->egl_surface = SDL_EGL_CreateSurface(_this, (NativeWindowType) wdata->gs);
+    windata->egl_surface = SDL_EGL_CreateSurface(_this, (NativeWindowType) windata->gs);
 
-    if (wdata->egl_surface == EGL_NO_SURFACE) {
+    if (windata->egl_surface == EGL_NO_SURFACE) {
         SDL_SetError("Could not create EGL window surface");
         goto error;
     }
 #endif /* SDL_VIDEO_OPENGL_EGL */
 
     /* In case we want low-latency, double-buffer video, we take note here */
-    wdata->double_buffer = SDL_FALSE;
+    windata->double_buffer = SDL_FALSE;
     if (SDL_GetHintBoolean(SDL_HINT_VIDEO_DOUBLE_BUFFER, SDL_FALSE)) {
-        wdata->double_buffer = SDL_TRUE;
+        windata->double_buffer = SDL_TRUE;
     }
 
     /* Setup driver data for this window */
-    window->driverdata = wdata;
+    window->driverdata = windata;
 
     /* One window, it always has focus */
     SDL_SetMouseFocus(window);
@@ -662,14 +662,14 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
     return 0;
 
 error:
-    if (wdata != NULL) {
+    if (windata != NULL) {
 #if SDL_VIDEO_OPENGL_EGL
-        if (wdata->egl_surface != EGL_NO_SURFACE)
-            SDL_EGL_DestroySurface(_this, wdata->egl_surface);
+        if (windata->egl_surface != EGL_NO_SURFACE)
+            SDL_EGL_DestroySurface(_this, windata->egl_surface);
 #endif /* SDL_VIDEO_OPENGL_EGL */
-        if (wdata->gs != NULL)
-            KMSDRM_gbm_surface_destroy(wdata->gs);
-        SDL_free(wdata);
+        if (windata->gs != NULL)
+            KMSDRM_gbm_surface_destroy(windata->gs);
+        SDL_free(windata);
     }
     return -1;
 }
@@ -677,29 +677,29 @@ error:
 void
 KMSDRM_DestroyWindow(_THIS, SDL_Window * window)
 {
-    SDL_WindowData *data = (SDL_WindowData *) window->driverdata;
-    if(data) {
+    SDL_WindowData *windata = (SDL_WindowData *) window->driverdata;
+    if(windata) {
         /* Wait for any pending page flips and unlock buffer */
-        KMSDRM_WaitPageFlip(_this, data, -1);
-        if (data->curr_bo != NULL) {
-            KMSDRM_gbm_surface_release_buffer(data->gs, data->curr_bo);
-            data->curr_bo = NULL;
+        KMSDRM_WaitPageFlip(_this, windata, -1);
+        if (windata->curr_bo != NULL) {
+            KMSDRM_gbm_surface_release_buffer(windata->gs, windata->curr_bo);
+            windata->curr_bo = NULL;
         }
-        if (data->next_bo != NULL) {
-            KMSDRM_gbm_surface_release_buffer(data->gs, data->next_bo);
-            data->next_bo = NULL;
+        if (windata->next_bo != NULL) {
+            KMSDRM_gbm_surface_release_buffer(windata->gs, windata->next_bo);
+            windata->next_bo = NULL;
         }
 #if SDL_VIDEO_OPENGL_EGL
         SDL_EGL_MakeCurrent(_this, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (data->egl_surface != EGL_NO_SURFACE) {
-            SDL_EGL_DestroySurface(_this, data->egl_surface);
+        if (windata->egl_surface != EGL_NO_SURFACE) {
+            SDL_EGL_DestroySurface(_this, windata->egl_surface);
         }
 #endif /* SDL_VIDEO_OPENGL_EGL */
-        if (data->gs != NULL) {
-            KMSDRM_gbm_surface_destroy(data->gs);
-            data->gs = NULL;
+        if (windata->gs != NULL) {
+            KMSDRM_gbm_surface_destroy(windata->gs);
+            windata->gs = NULL;
         }
-        SDL_free(data);
+        SDL_free(windata);
         window->driverdata = NULL;
     }
 }
