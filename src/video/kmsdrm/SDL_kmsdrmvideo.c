@@ -352,7 +352,6 @@ KMSDRM_VideoInit(_THIS)
     SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     SDL_DisplayData *dispdata = NULL;
     drmModeRes *resources = NULL;
-    drmModeConnector *connector = NULL;
     drmModeEncoder *encoder = NULL;
 
     dispdata = (SDL_DisplayData *) SDL_calloc(1, sizeof(SDL_DisplayData));
@@ -383,7 +382,7 @@ KMSDRM_VideoInit(_THIS)
         goto cleanup;
     }
 
-    /* Find the first available connector with modes */
+    /* Get all of the available connectors / devices / crtcs */
     resources = KMSDRM_drmModeGetResources(viddata->drm_fd);
     if (!resources) {
         ret = SDL_SetError("drmModeGetResources(%d) failed", viddata->drm_fd);
@@ -391,25 +390,23 @@ KMSDRM_VideoInit(_THIS)
     }
 
     for (int i = 0; i < resources->count_connectors; i++) {
-        connector = KMSDRM_drmModeGetConnector(viddata->drm_fd, resources->connectors[i]);
+        drmModeConnector *conn = KMSDRM_drmModeGetConnector(viddata->drm_fd, resources->connectors[i]);
 
-        if (!connector) {
+        if (!conn) {
             continue;
         }
 
-        if (connector->connection == DRM_MODE_CONNECTED &&
-            connector->count_modes > 0) {
+        if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes) {
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found connector %d with %d modes.",
-                         connector->connector_id, connector->count_modes);
-            dispdata->conn_id = connector->connector_id;
+                         conn->connector_id, conn->count_modes);
+            dispdata->conn = conn;
             break;
         }
 
-        KMSDRM_drmModeFreeConnector(connector);
-        connector = NULL;
+        KMSDRM_drmModeFreeConnector(conn);
     }
 
-    if (!connector) {
+    if (!dispdata->conn) {
         ret = SDL_SetError("No currently active connector found.");
         goto cleanup;
     }
@@ -422,7 +419,7 @@ KMSDRM_VideoInit(_THIS)
           continue;
         }
 
-        if (encoder->encoder_id == connector->encoder_id) {
+        if (encoder->encoder_id == dispdata->conn->encoder_id) {
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found encoder %d.", encoder->encoder_id);
             break;
         }
@@ -440,13 +437,13 @@ KMSDRM_VideoInit(_THIS)
               continue;
             }
 
-            for (j = 0; j < connector->count_encoders; j++) {
-                if (connector->encoders[j] == encoder->encoder_id) {
+            for (j = 0; j < dispdata->conn->count_encoders; j++) {
+                if (dispdata->conn->encoders[j] == encoder->encoder_id) {
                     break;
                 }
             }
 
-            if (j != connector->count_encoders) {
+            if (j != dispdata->conn->count_encoders) {
               break;
             }
 
@@ -496,7 +493,7 @@ KMSDRM_VideoInit(_THIS)
     if (dispdata->saved_crtc->mode_valid == 0) {
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
             "Current mode is invalid, selecting connector's mode #0.");
-        dispdata->mode = connector->modes[0];
+        dispdata->mode = dispdata->conn->modes[0];
     }
 
     /* Setup the single display that's available */
@@ -527,13 +524,15 @@ KMSDRM_VideoInit(_THIS)
 cleanup:
     if (encoder)
         KMSDRM_drmModeFreeEncoder(encoder);
-    if (connector)
-        KMSDRM_drmModeFreeConnector(connector);
     if (resources)
         KMSDRM_drmModeFreeResources(resources);
 
     if (ret != 0) {
         /* Error (complete) cleanup */
+        if (dispdata->conn) {
+            KMSDRM_drmModeFreeConnector(dispdata->conn);
+            dispdata->conn = NULL;
+        }
         if (dispdata->saved_crtc) {
             KMSDRM_drmModeFreeCrtc(dispdata->saved_crtc);
             dispdata->saved_crtc = NULL;
@@ -563,16 +562,23 @@ KMSDRM_VideoQuit(_THIS)
         SDL_GL_UnloadLibrary();
     }
 
-    if (dispdata->saved_crtc) {
-        if (viddata->drm_fd >= 0 && dispdata->conn_id > 0) {
-            /* Restore saved CRTC settings */
-            drmModeCrtc *crtc = dispdata->saved_crtc;
-            if(KMSDRM_drmModeSetCrtc(viddata->drm_fd, crtc->crtc_id, crtc->buffer_id,
-                                     crtc->x, crtc->y, &dispdata->conn_id, 1,
-                                     &crtc->mode) != 0) {
-                SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Could not restore original CRTC mode");
-            }
+    /* Restore saved CRTC settings */
+    if (viddata->drm_fd >= 0 && dispdata->conn && dispdata->saved_crtc) {
+        drmModeConnector *conn = dispdata->conn;
+        drmModeCrtc *crtc = dispdata->saved_crtc;
+
+        int ret = KMSDRM_drmModeSetCrtc(viddata->drm_fd, crtc->crtc_id, crtc->buffer_id,
+                                        crtc->x, crtc->y, &conn->connector_id, 1, &crtc->mode);
+
+        if (ret != 0) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Could not restore original CRTC mode");
         }
+    }
+    if (dispdata->conn) {
+        KMSDRM_drmModeFreeConnector(dispdata->conn);
+        dispdata->conn = NULL;
+    }
+    if (dispdata->saved_crtc) {
         KMSDRM_drmModeFreeCrtc(dispdata->saved_crtc);
         dispdata->saved_crtc = NULL;
     }

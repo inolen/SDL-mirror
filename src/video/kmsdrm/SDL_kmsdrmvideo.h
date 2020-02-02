@@ -46,7 +46,7 @@ typedef struct SDL_VideoData
 typedef struct SDL_DisplayData
 {
     uint32_t crtc_id;
-    uint32_t conn_id;
+    drmModeConnector *conn;
     drmModeModeInfo mode;
     drmModeCrtc *saved_crtc;    /* CRTC to restore on quit */
 } SDL_DisplayData;

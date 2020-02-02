@@ -108,7 +108,7 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
            drmModePageFlip can be used the CRTC has to be configured to use
            the current connector and mode with drmModeSetCrtc */
         ret = KMSDRM_drmModeSetCrtc(viddata->drm_fd, dispdata->crtc_id, fb_info->fb_id, 0,
-                                    0, &dispdata->conn_id, 1, &dispdata->mode);
+                                    0, &dispdata->conn->connector_id, 1, &dispdata->mode);
 
         if (ret) {
           SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Could not configure CRTC");
