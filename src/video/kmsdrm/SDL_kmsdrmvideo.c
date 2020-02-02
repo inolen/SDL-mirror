@@ -262,39 +262,44 @@ KMSDRM_FBDestroyCallback(struct gbm_bo *bo, void *data)
 KMSDRM_FBInfo *
 KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
 {
-    uint32_t w, h, stride, handle;
-    int ret;
     SDL_VideoData *vdata = ((SDL_VideoData *)_this->driverdata);
-    KMSDRM_FBInfo *fb_info;
 
-    fb_info = (KMSDRM_FBInfo *)KMSDRM_gbm_bo_get_user_data(bo);
-    if (fb_info != NULL) {
-        /* Have a previously used framebuffer, return it */
+    /* Check for an existing framebuffer */
+    KMSDRM_FBInfo *fb_info = (KMSDRM_FBInfo *)KMSDRM_gbm_bo_get_user_data(bo);
+
+    if (fb_info) {
         return fb_info;
     }
 
-    /* Here a new DRM FB must be created */
+    /* Create a structure that contains enough info to remove the framebuffer
+       when the backing buffer is destroyed */
     fb_info = (KMSDRM_FBInfo *)SDL_calloc(1, sizeof(KMSDRM_FBInfo));
-    if (fb_info == NULL) {
+
+    if (!fb_info) {
         SDL_OutOfMemory();
         return NULL;
     }
+
     fb_info->drm_fd = vdata->drm_fd;
 
-    w  = KMSDRM_gbm_bo_get_width(bo);
-    h = KMSDRM_gbm_bo_get_height(bo);
-    stride = KMSDRM_gbm_bo_get_stride(bo);
-    handle = KMSDRM_gbm_bo_get_handle(bo).u32;
-
-    ret = KMSDRM_drmModeAddFB(vdata->drm_fd, w, h, 24, 32, stride, handle, &fb_info->fb_id);
-    if (ret < 0) {
-       SDL_free(fb_info);
-       return NULL;
+    /* Create framebuffer object for the buffer */
+    unsigned w = KMSDRM_gbm_bo_get_width(bo);
+    unsigned h = KMSDRM_gbm_bo_get_height(bo);
+    Uint32 stride = KMSDRM_gbm_bo_get_stride(bo);
+    Uint32 handle = KMSDRM_gbm_bo_get_handle(bo).u32;
+    int ret = KMSDRM_drmModeAddFB(vdata->drm_fd, w, h, 24, 32, stride, handle,
+                                  &fb_info->fb_id);
+    if (ret) {
+      SDL_free(fb_info);
+      return NULL;
     }
-    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "New DRM FB (%u): %ux%u, stride %u from BO %p", fb_info->fb_id, w, h, stride, (void *)bo);
+
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "New DRM FB (%u): %ux%u, stride %u from BO %p",
+                 fb_info->fb_id, w, h, stride, (void *)bo);
 
     /* Associate our DRM framebuffer with this buffer object */
     KMSDRM_gbm_bo_set_user_data(bo, fb_info, KMSDRM_FBDestroyCallback);
+
     return fb_info;
 }
 
@@ -646,12 +651,6 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
         wdata->double_buffer = SDL_TRUE;
     }
 
-    /* Window is created, but we have yet to set up CRTC to one of the GBM buffers if we want
-       drmModePageFlip to work, and we can't do it until EGL is completely setup, because we
-       need to do eglSwapBuffers so we can get a valid GBM buffer object to call
-       drmModeSetCrtc on it. */
-    wdata->crtc_ready = SDL_FALSE;
-
     /* Setup driver data for this window */
     window->driverdata = wdata;
 
@@ -682,10 +681,6 @@ KMSDRM_DestroyWindow(_THIS, SDL_Window * window)
     if(data) {
         /* Wait for any pending page flips and unlock buffer */
         KMSDRM_WaitPageFlip(_this, data, -1);
-        if (data->crtc_bo != NULL) {
-            KMSDRM_gbm_surface_release_buffer(data->gs, data->crtc_bo);
-            data->crtc_bo = NULL;
-        }
         if (data->curr_bo != NULL) {
             KMSDRM_gbm_surface_release_buffer(data->gs, data->curr_bo);
             data->curr_bo = NULL;
