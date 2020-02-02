@@ -28,6 +28,7 @@
 #include "SDL_syswm.h"
 #include "SDL_log.h"
 #include "SDL_hints.h"
+#include "../../events/SDL_events_c.h"
 #include "../../events/SDL_mouse_c.h"
 #include "../../events/SDL_keyboard_c.h"
 
@@ -345,6 +346,83 @@ KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *windata, int timeout) {
 /* SDL Video and Display initialization/handling functions                   */
 /* _this is a SDL_VideoDevice *                                              */
 /*****************************************************************************/
+static int
+KMSDRM_DestroySurfaces(_THIS, SDL_Window * window)
+{
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
+    SDL_WindowData *windata = (SDL_WindowData *)window->driverdata;
+
+    KMSDRM_WaitPageFlip(_this, windata, -1);
+
+    if (windata->curr_bo) {
+        KMSDRM_gbm_surface_release_buffer(windata->gs, windata->curr_bo);
+        windata->curr_bo = NULL;
+    }
+
+    if (windata->next_bo) {
+        KMSDRM_gbm_surface_release_buffer(windata->gs, windata->next_bo);
+        windata->next_bo = NULL;
+    }
+
+#if SDL_VIDEO_OPENGL_EGL
+    SDL_EGL_MakeCurrent(_this, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+    if (windata->egl_surface != EGL_NO_SURFACE) {
+        SDL_EGL_DestroySurface(_this, windata->egl_surface);
+        windata->egl_surface = EGL_NO_SURFACE;
+    }
+#endif
+
+    if (windata->gs) {
+        KMSDRM_gbm_surface_destroy(windata->gs);
+        windata->gs = NULL;
+    }
+}
+
+int
+KMSDRM_CreateSurfaces(_THIS, SDL_Window * window)
+{
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
+    SDL_WindowData *windata = (SDL_WindowData *)window->driverdata;
+    SDL_DisplayData *dispdata = (SDL_DisplayData *) SDL_GetDisplayForWindow(window)->driverdata;
+    Uint32 width = dispdata->mode.hdisplay;
+    Uint32 height = dispdata->mode.vdisplay;
+    Uint32 surface_fmt = GBM_FORMAT_XRGB8888;
+    Uint32 surface_flags = GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING;
+
+    if (!KMSDRM_gbm_device_is_format_supported(viddata->gbm, surface_fmt, surface_flags)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "GBM surface format not supported. Trying anyway.");
+    }
+
+#if SDL_VIDEO_OPENGL_EGL
+    SDL_EGL_SetRequiredVisualId(_this, surface_fmt);
+
+    EGLContext egl_context = (EGLContext)SDL_GL_GetCurrentContext();
+#endif
+
+    KMSDRM_DestroySurfaces(_this, window);
+
+    windata->gs = KMSDRM_gbm_surface_create(viddata->gbm, width, height, surface_fmt, surface_flags);
+
+    if (!windata->gs) {
+        return SDL_SetError("Could not create GBM surface");
+    }
+
+#if SDL_VIDEO_OPENGL_EGL
+    windata->egl_surface = SDL_EGL_CreateSurface(_this, (NativeWindowType)windata->gs);
+
+    if (windata->egl_surface == EGL_NO_SURFACE) {
+        return SDL_SetError("Could not create EGL window surface");
+    }
+
+    SDL_EGL_MakeCurrent(_this, windata->egl_surface, egl_context);
+
+    windata->egl_surface_dirty = 0;
+#endif
+
+    return 0;
+}
+
 int
 KMSDRM_VideoInit(_THIS)
 {
@@ -562,6 +640,12 @@ KMSDRM_VideoQuit(_THIS)
         SDL_GL_UnloadLibrary();
     }
 
+    /* Clear out the window list */
+    SDL_free(viddata->windows);
+    viddata->windows = NULL;
+    viddata->max_windows = 0;
+    viddata->num_windows = 0;
+
     /* Restore saved CRTC settings */
     if (viddata->drm_fd >= 0 && dispdata->conn && dispdata->saved_crtc) {
         drmModeConnector *conn = dispdata->conn;
@@ -599,47 +683,68 @@ KMSDRM_VideoQuit(_THIS)
 void
 KMSDRM_GetDisplayModes(_THIS, SDL_VideoDisplay * display)
 {
-    /* Only one display mode available, the current one */
-    SDL_AddDisplayMode(display, &display->current_mode);
+    SDL_DisplayData *dispdata = display->driverdata;
+    drmModeConnector *conn = dispdata->conn;
+
+    for (int i = 0; i < conn->count_modes; i++) {
+        SDL_DisplayModeData *modedata = SDL_calloc(1, sizeof(SDL_DisplayModeData));
+
+        if (modedata) {
+          modedata->mode_index = i;
+        }
+
+        SDL_DisplayMode mode;
+        mode.w = conn->modes[i].hdisplay;
+        mode.h = conn->modes[i].vdisplay;
+        mode.refresh_rate = conn->modes[i].vrefresh;
+        mode.format = SDL_PIXELFORMAT_ARGB8888;
+        mode.driverdata = modedata;
+
+        if (!SDL_AddDisplayMode(display, &mode)) {
+            SDL_free(modedata);
+        }
+    }
 }
 
 int
 KMSDRM_SetDisplayMode(_THIS, SDL_VideoDisplay * display, SDL_DisplayMode * mode)
 {
+    SDL_VideoData *viddata = (SDL_VideoData *)_this->driverdata;
+    SDL_DisplayData *dispdata = (SDL_DisplayData *)display->driverdata;
+    SDL_DisplayModeData *modedata = (SDL_DisplayModeData *)mode->driverdata;
+
+    if (!modedata) {
+        return SDL_SetError("Mode doesn't have an associated index");
+    }
+
+    drmModeConnector *conn = dispdata->conn;
+    dispdata->mode = conn->modes[modedata->mode_index];
+
+    for (int i = 0; i < viddata->num_windows; i++) {
+        SDL_Window *window = viddata->windows[i];
+        SDL_WindowData *windata = (SDL_WindowData *)window->driverdata;
+
+#if SDL_VIDEO_OPENGL_EGL
+        /* Can't recreate EGL surfaces right now, need to wait until SwapWindow
+           so the correct thread-local surface and context state are available */
+        windata->egl_surface_dirty = 1;
+#else
+        if (KMSDRM_CreateSurfaces(_this, window)) {
+            return -1;
+        }
+#endif
+
+        /* Tell app about the resize */
+        SDL_SendWindowEvent(window, SDL_WINDOWEVENT_RESIZED, mode->w, mode->h);
+    }
+
     return 0;
 }
 
 int
 KMSDRM_CreateWindow(_THIS, SDL_Window * window)
 {
-    SDL_WindowData *windata;
-    SDL_VideoDisplay *display;
-    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
-    Uint32 surface_fmt, surface_flags;
-
-    /* Allocate window internal data */
-    windata = (SDL_WindowData *) SDL_calloc(1, sizeof(SDL_WindowData));
-    if (!windata) {
-        SDL_OutOfMemory();
-        goto error;
-    }
-
-    display = SDL_GetDisplayForWindow(window);
-
-    /* Windows have one size for now */
-    window->w = display->desktop_mode.w;
-    window->h = display->desktop_mode.h;
-
-    /* Maybe you didn't ask for a fullscreen OpenGL window, but that's what you get */
-    window->flags |= (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_OPENGL);
-
-    surface_fmt = GBM_FORMAT_XRGB8888;
-    surface_flags = GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING;
-
-    if (!KMSDRM_gbm_device_is_format_supported(viddata->gbm, surface_fmt, surface_flags)) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "GBM surface format not supported. Trying anyway.");
-    }
-    windata->gs = KMSDRM_gbm_surface_create(viddata->gbm, window->w, window->h, surface_fmt, surface_flags);
+    SDL_VideoData *viddata = (SDL_VideoData *)_this->driverdata;
 
 #if SDL_VIDEO_OPENGL_EGL
     if (!_this->egl_data) {
@@ -647,17 +752,27 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
             goto error;
         }
     }
-    SDL_EGL_SetRequiredVisualId(_this, surface_fmt);
-    windata->egl_surface = SDL_EGL_CreateSurface(_this, (NativeWindowType) windata->gs);
+#endif
 
-    if (windata->egl_surface == EGL_NO_SURFACE) {
-        SDL_SetError("Could not create EGL window surface");
+    /* Allocate window internal data */
+    SDL_WindowData *windata = (SDL_WindowData *)SDL_calloc(1, sizeof(SDL_WindowData));
+
+    if (!windata) {
+        SDL_OutOfMemory();
         goto error;
     }
-#endif /* SDL_VIDEO_OPENGL_EGL */
+
+    /* Windows have one size for now */
+    SDL_VideoDisplay *display = SDL_GetDisplayForWindow(window);
+    window->w = display->desktop_mode.w;
+    window->h = display->desktop_mode.h;
+
+    /* Maybe you didn't ask for a fullscreen OpenGL window, but that's what you get */
+    window->flags |= (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_OPENGL);
 
     /* In case we want low-latency, double-buffer video, we take note here */
     windata->double_buffer = SDL_FALSE;
+
     if (SDL_GetHintBoolean(SDL_HINT_VIDEO_DOUBLE_BUFFER, SDL_FALSE)) {
         windata->double_buffer = SDL_TRUE;
     }
@@ -665,19 +780,34 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
     /* Setup driver data for this window */
     window->driverdata = windata;
 
-    /* Window has been successfully created */
+    if (KMSDRM_CreateSurfaces(_this, window)) {
+      goto error;
+    }
+
+    /* Add window to the internal list of tracked windows. Note, while it may
+       seem odd to support multiple fullscreen windows, some apps create an
+       extra window as a dummy surface when working with multiple contexts */
+    windata->viddata = viddata;
+
+    if (viddata->num_windows >= viddata->max_windows) {
+        int new_max_windows = viddata->max_windows + 1;
+        viddata->windows = (SDL_Window **)SDL_realloc(viddata->windows,
+              new_max_windows * sizeof(SDL_Window *));
+        viddata->max_windows = new_max_windows;
+
+        if (!viddata->windows) {
+            SDL_OutOfMemory();
+            goto error;
+        }
+    }
+
+    viddata->windows[viddata->num_windows++] = window;
+
     return 0;
 
 error:
-    if (windata) {
-#if SDL_VIDEO_OPENGL_EGL
-        if (windata->egl_surface != EGL_NO_SURFACE)
-            SDL_EGL_DestroySurface(_this, windata->egl_surface);
-#endif /* SDL_VIDEO_OPENGL_EGL */
-        if (windata->gs)
-            KMSDRM_gbm_surface_destroy(windata->gs);
-        SDL_free(windata);
-    }
+    KMSDRM_DestroyWindow(_this, window);
+
     return -1;
 }
 
@@ -685,30 +815,31 @@ void
 KMSDRM_DestroyWindow(_THIS, SDL_Window * window)
 {
     SDL_WindowData *windata = (SDL_WindowData *) window->driverdata;
-    if(windata) {
-        /* Wait for any pending page flips and unlock buffer */
-        KMSDRM_WaitPageFlip(_this, windata, -1);
-        if (windata->curr_bo) {
-            KMSDRM_gbm_surface_release_buffer(windata->gs, windata->curr_bo);
-            windata->curr_bo = NULL;
-        }
-        if (windata->next_bo) {
-            KMSDRM_gbm_surface_release_buffer(windata->gs, windata->next_bo);
-            windata->next_bo = NULL;
-        }
-#if SDL_VIDEO_OPENGL_EGL
-        SDL_EGL_MakeCurrent(_this, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (windata->egl_surface != EGL_NO_SURFACE) {
-            SDL_EGL_DestroySurface(_this, windata->egl_surface);
-        }
-#endif /* SDL_VIDEO_OPENGL_EGL */
-        if (windata->gs) {
-            KMSDRM_gbm_surface_destroy(windata->gs);
-            windata->gs = NULL;
-        }
-        SDL_free(windata);
-        window->driverdata = NULL;
+
+    if (!windata) {
+        return;
     }
+
+    /* Remove from the internal window list */
+    SDL_VideoData *viddata = windata->viddata;
+
+    for (int i = 0; i < viddata->num_windows; i++) {
+        if (viddata->windows[i] == window) {
+            viddata->num_windows--;
+
+            for (int j = i; j < viddata->num_windows; j++) {
+                viddata->windows[j] = viddata->windows[j + 1];
+            }
+
+            break;
+        }
+    }
+
+    KMSDRM_DestroySurfaces(_this, window);
+
+    window->driverdata = NULL;
+
+    SDL_free(windata);
 }
 
 int
