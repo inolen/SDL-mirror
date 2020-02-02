@@ -140,7 +140,7 @@ KMSDRM_Available(void)
 }
 
 static void
-KMSDRM_Destroy(SDL_VideoDevice * device)
+KMSDRM_DeleteDevice(SDL_VideoDevice * device)
 {
     if (device->driverdata) {
         SDL_free(device->driverdata);
@@ -148,11 +148,12 @@ KMSDRM_Destroy(SDL_VideoDevice * device)
     }
 
     SDL_free(device);
+
     SDL_KMSDRM_UnloadSymbols();
 }
 
 static SDL_VideoDevice *
-KMSDRM_Create(int devindex)
+KMSDRM_CreateDevice(int devindex)
 {
     SDL_VideoDevice *device;
     SDL_VideoData *viddata;
@@ -170,14 +171,12 @@ KMSDRM_Create(int devindex)
         return NULL;
     }
 
-    /* Initialize SDL_VideoDevice structure */
     device = (SDL_VideoDevice *) SDL_calloc(1, sizeof(SDL_VideoDevice));
     if (!device) {
         SDL_OutOfMemory();
         return NULL;
     }
 
-    /* Initialize internal data */
     viddata = (SDL_VideoData *) SDL_calloc(1, sizeof(SDL_VideoData));
     if (!viddata) {
         SDL_OutOfMemory();
@@ -187,12 +186,6 @@ KMSDRM_Create(int devindex)
     viddata->drm_fd = -1;
 
     device->driverdata = viddata;
-
-    /* Setup amount of available displays and current display */
-    device->num_displays = 0;
-
-    /* Set device free function */
-    device->free = KMSDRM_Destroy;
 
     /* Setup all functions which we can handle */
     device->VideoInit = KMSDRM_VideoInit;
@@ -225,8 +218,8 @@ KMSDRM_Create(int devindex)
     device->GL_SwapWindow = KMSDRM_GLES_SwapWindow;
     device->GL_DeleteContext = KMSDRM_GLES_DeleteContext;
 #endif
-
     device->PumpEvents = KMSDRM_PumpEvents;
+    device->free = KMSDRM_DeleteDevice;
 
     return device;
 
@@ -242,7 +235,7 @@ VideoBootStrap KMSDRM_bootstrap = {
     "KMSDRM",
     "KMS/DRM Video Driver",
     KMSDRM_Available,
-    KMSDRM_Create
+    KMSDRM_CreateDevice
 };
 
 
@@ -612,7 +605,6 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
         goto error;
     }
 
-    windata->waiting_for_flip = SDL_FALSE;
     display = SDL_GetDisplayForWindow(window);
 
     /* Windows have one size for now */
