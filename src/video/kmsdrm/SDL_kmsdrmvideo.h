@@ -28,7 +28,6 @@
 
 #include <fcntl.h>
 #include <unistd.h>
-#include <poll.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <gbm.h>
@@ -41,8 +40,6 @@ typedef struct SDL_VideoData
     int devindex;               /* device index that was passed on creation */
     int drm_fd;                 /* DRM file desc */
     struct gbm_device *gbm;
-    drmEventContext drm_evctx;  /* DRM event context */
-    struct pollfd drm_pollfd;   /* pollfd containing DRM file desc */
     drmModeCrtc *saved_crtc;    /* Saved CRTC to restore on quit */
     uint32_t saved_conn_id;     /* Saved DRM connector ID */
     uint32_t crtc_id;           /* CRTC in use */

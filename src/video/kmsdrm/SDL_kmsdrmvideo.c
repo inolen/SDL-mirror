@@ -44,6 +44,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
+#include <poll.h>
 
 #define KMSDRM_DRI_PATH "/dev/dri/"
 
@@ -296,40 +297,49 @@ KMSDRM_FBFromBO(_THIS, struct gbm_bo *bo)
     return fb_info;
 }
 
-SDL_bool
-KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *windata, int timeout) {
-    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
-
-    while (windata->waiting_for_flip) {
-        viddata->drm_pollfd.revents = 0;
-        if (poll(&viddata->drm_pollfd, 1, timeout) < 0) {
-            SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "DRM poll error");
-            return SDL_FALSE;
-        }
-
-        if (viddata->drm_pollfd.revents & (POLLHUP | POLLERR)) {
-            SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "DRM poll hup or error");
-            return SDL_FALSE;
-        }
-
-        if (viddata->drm_pollfd.revents & POLLIN) {
-            /* Page flip? If so, drmHandleEvent will unset windata->waiting_for_flip */
-            KMSDRM_drmHandleEvent(viddata->drm_fd, &viddata->drm_evctx);
-        } else {
-            /* Timed out and page flip didn't happen */
-            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Dropping frame while waiting_for_flip");
-            return SDL_FALSE;
-        }
-    }
-    return SDL_TRUE;
-}
-
 static void
 KMSDRM_FlipHandler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, void *data)
 {
     *((SDL_bool *) data) = SDL_FALSE;
 }
 
+SDL_bool
+KMSDRM_WaitPageFlip(_THIS, SDL_WindowData *windata, int timeout) {
+    SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
+
+    drmEventContext ev = {0};
+    ev.version = DRM_EVENT_CONTEXT_VERSION;
+    ev.page_flip_handler = KMSDRM_FlipHandler;
+
+    struct pollfd pfd = {0};
+    pfd.fd = viddata->drm_fd;
+    pfd.events = POLLIN;
+
+    while (windata->waiting_for_flip) {
+        pfd.revents = 0;
+
+        if (poll(&pfd, 1, timeout) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "DRM poll error");
+            return SDL_FALSE;
+        }
+
+        if (pfd.revents & (POLLHUP | POLLERR)) {
+            SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "DRM poll hup or error");
+            return SDL_FALSE;
+        }
+
+        if (pfd.revents & POLLIN) {
+            /* Page flip? If so, drmHandleEvent will unset windata->waiting_for_flip */
+            KMSDRM_drmHandleEvent(viddata->drm_fd, &ev);
+        } else {
+            /* Timed out and page flip didn't happen */
+            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Dropping frame while waiting_for_flip");
+            return SDL_FALSE;
+        }
+    }
+
+    return SDL_TRUE;
+}
 
 /*****************************************************************************/
 /* SDL Video and Display initialization/handling functions                   */
@@ -497,12 +507,6 @@ KMSDRM_VideoInit(_THIS)
     display.driverdata = dispdata;
     /* SDL_VideoQuit will later SDL_free(display.driverdata) */
     SDL_AddVideoDisplay(&display);
-
-    /* Setup page flip handler */
-    viddata->drm_pollfd.fd = viddata->drm_fd;
-    viddata->drm_pollfd.events = POLLIN;
-    viddata->drm_evctx.version = DRM_EVENT_CONTEXT_VERSION;
-    viddata->drm_evctx.page_flip_handler = KMSDRM_FlipHandler;
 
 #ifdef SDL_INPUT_LINUXEV
     SDL_EVDEV_Init();
