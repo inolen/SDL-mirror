@@ -48,7 +48,6 @@ typedef struct SDL_VideoData
 
 typedef struct SDL_DisplayData
 {
-    uint32_t encoder_id;
     uint32_t crtc_id;
     drmModeModeInfo cur_mode;
 } SDL_DisplayData;

@@ -428,12 +428,10 @@ KMSDRM_VideoInit(_THIS)
             continue;
 
         if (encoder->encoder_id == connector->encoder_id) {
-            dispdata->encoder_id = encoder->encoder_id;
             found = SDL_TRUE;
         } else {
             for (j = 0; j < connector->count_encoders; j++) {
                 if (connector->encoders[j] == encoder->encoder_id) {
-                    dispdata->encoder_id = encoder->encoder_id;
                     found = SDL_TRUE;
                     break;
                 }
@@ -441,7 +439,7 @@ KMSDRM_VideoInit(_THIS)
         }
 
         if (found == SDL_TRUE) {
-            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found encoder %d.", dispdata->encoder_id);
+            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Found encoder %d.", encoder->encoder_id);
             break;
         }
 
