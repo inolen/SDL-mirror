@@ -40,16 +40,15 @@ typedef struct SDL_VideoData
     int devindex;               /* device index that was passed on creation */
     int drm_fd;                 /* DRM file desc */
     struct gbm_device *gbm;
-    drmModeCrtc *saved_crtc;    /* Saved CRTC to restore on quit */
-    uint32_t saved_conn_id;     /* Saved DRM connector ID */
-    uint32_t crtc_id;           /* CRTC in use */
 } SDL_VideoData;
 
 
 typedef struct SDL_DisplayData
 {
     uint32_t crtc_id;
-    drmModeModeInfo cur_mode;
+    uint32_t conn_id;
+    drmModeModeInfo mode;
+    drmModeCrtc *saved_crtc;    /* CRTC to restore on quit */
 } SDL_DisplayData;
 
 

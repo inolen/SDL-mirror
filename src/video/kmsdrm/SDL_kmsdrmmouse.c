@@ -50,6 +50,8 @@ KMSDRM_IsCursorSizeSupported (int w, int h, uint32_t bo_format) {
 
     SDL_VideoDevice *dev = SDL_GetVideoDevice();
     SDL_VideoData *viddata = ((SDL_VideoData *)dev->driverdata);
+    SDL_DisplayData *dispdata = (SDL_DisplayData *)SDL_GetDisplayDriverData(0);
+
     int ret;
     uint32_t bo_handle;
     struct gbm_bo *bo = KMSDRM_gbm_bo_create(viddata->gbm, w, h, bo_format,
@@ -61,7 +63,7 @@ KMSDRM_IsCursorSizeSupported (int w, int h, uint32_t bo_format) {
     }
 
     bo_handle = KMSDRM_gbm_bo_get_handle(bo).u32;
-    ret = KMSDRM_drmModeSetCursor(viddata->drm_fd, viddata->crtc_id, bo_handle, w, h);
+    ret = KMSDRM_drmModeSetCursor(viddata->drm_fd, dispdata->crtc_id, bo_handle, w, h);
 
     if (ret) {
         goto cleanup;
