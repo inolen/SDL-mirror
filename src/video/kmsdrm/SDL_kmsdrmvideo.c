@@ -659,10 +659,6 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
     /* Setup driver data for this window */
     window->driverdata = windata;
 
-    /* One window, it always has focus */
-    SDL_SetMouseFocus(window);
-    SDL_SetKeyboardFocus(window);
-
     /* Window has been successfully created */
     return 0;
 
