@@ -349,7 +349,6 @@ int
 KMSDRM_VideoInit(_THIS)
 {
     int ret = 0;
-    char *devname;
     SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
     SDL_DisplayData *dispdata = NULL;
     drmModeRes *resources = NULL;
@@ -365,20 +364,17 @@ KMSDRM_VideoInit(_THIS)
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "KMSDRM_VideoInit()");
 
     /* Open /dev/dri/cardNN */
-    devname = (char *) SDL_calloc(1, 16);
-    if (!devname) {
-        ret = SDL_OutOfMemory();
-        goto cleanup;
-    }
-    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opening device /dev/dri/card%d", viddata->devindex);
-    SDL_snprintf(devname, 16, "/dev/dri/card%d", viddata->devindex);
+    char devname[32];
+    SDL_snprintf(devname, sizeof(devname), "/dev/dri/card%d", viddata->devindex);
+
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opening device %s", devname);
     viddata->drm_fd = open(devname, O_RDWR | O_CLOEXEC);
-    SDL_free(devname);
 
     if (viddata->drm_fd < 0) {
-        ret = SDL_SetError("Could not open /dev/dri/card%d.", viddata->devindex);
+        ret = SDL_SetError("Could not open %s", devname);
         goto cleanup;
     }
+
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opened DRM FD (%d)", viddata->drm_fd);
 
     viddata->gbm = KMSDRM_gbm_create_device(viddata->drm_fd);
