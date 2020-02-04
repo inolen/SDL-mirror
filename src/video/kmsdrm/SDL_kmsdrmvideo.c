@@ -351,14 +351,13 @@ KMSDRM_VideoInit(_THIS)
     int ret = 0;
     char *devname;
     SDL_VideoData *viddata = ((SDL_VideoData *)_this->driverdata);
+    SDL_DisplayData *dispdata = NULL;
     drmModeRes *resources = NULL;
     drmModeConnector *connector = NULL;
     drmModeEncoder *encoder = NULL;
-    SDL_DisplayMode current_mode;
-    SDL_VideoDisplay display;
 
-    /* Allocate display internal data */
-    SDL_DisplayData *dispdata = (SDL_DisplayData *) SDL_calloc(1, sizeof(SDL_DisplayData));
+    dispdata = (SDL_DisplayData *) SDL_calloc(1, sizeof(SDL_DisplayData));
+
     if (!dispdata) {
         return SDL_OutOfMemory();
     }
@@ -504,27 +503,21 @@ KMSDRM_VideoInit(_THIS)
         dispdata->mode = connector->modes[0];
     }
 
-    SDL_zero(current_mode);
-
-    current_mode.w = dispdata->mode.hdisplay;
-    current_mode.h = dispdata->mode.vdisplay;
-    current_mode.refresh_rate = dispdata->mode.vrefresh;
-
-    /* FIXME ?
+    /* Setup the single display that's available */
+    SDL_VideoDisplay display = {0};
+    display.desktop_mode.w = dispdata->mode.hdisplay;
+    display.desktop_mode.h = dispdata->mode.vdisplay;
+    display.desktop_mode.refresh_rate = dispdata->mode.vrefresh;
+#if 1
+    display.desktop_mode.format = SDL_PIXELFORMAT_ARGB8888;
+#else
+    /* FIXME */
     drmModeFB *fb = drmModeGetFB(viddata->drm_fd, dispdata->saved_crtc->buffer_id);
-    current_mode.format = drmToSDLPixelFormat(fb->bpp, fb->depth);
+    display.desktop_mode.format = drmToSDLPixelFormat(fb->bpp, fb->depth);
     drmModeFreeFB(fb);
-    */
-    current_mode.format = SDL_PIXELFORMAT_ARGB8888;
-
-    current_mode.driverdata = NULL;
-
-    SDL_zero(display);
-    display.desktop_mode = current_mode;
-    display.current_mode = current_mode;
-
+#endif
+    display.current_mode = display.desktop_mode;
     display.driverdata = dispdata;
-    /* SDL_VideoQuit will later SDL_free(display.driverdata) */
     SDL_AddVideoDisplay(&display);
 
 #ifdef SDL_INPUT_LINUXEV
