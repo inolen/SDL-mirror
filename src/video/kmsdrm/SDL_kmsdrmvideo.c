@@ -60,7 +60,7 @@ check_modestting(int devindex)
     if (drm_fd >= 0) {
         if (SDL_KMSDRM_LoadSymbols()) {
             drmModeRes *resources = KMSDRM_drmModeGetResources(drm_fd);
-            if (resources != NULL) {
+            if (resources) {
                 SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "%scard%d connector, encoder and CRTC counts are: %d %d %d",
                              KMSDRM_DRI_PATH, devindex,
                              resources->count_connectors, resources->count_encoders, resources->count_crtcs);
@@ -142,7 +142,7 @@ KMSDRM_Available(void)
 static void
 KMSDRM_Destroy(SDL_VideoDevice * device)
 {
-    if (device->driverdata != NULL) {
+    if (device->driverdata) {
         SDL_free(device->driverdata);
         device->driverdata = NULL;
     }
@@ -172,14 +172,14 @@ KMSDRM_Create(int devindex)
 
     /* Initialize SDL_VideoDevice structure */
     device = (SDL_VideoDevice *) SDL_calloc(1, sizeof(SDL_VideoDevice));
-    if (device == NULL) {
+    if (!device) {
         SDL_OutOfMemory();
         return NULL;
     }
 
     /* Initialize internal data */
     viddata = (SDL_VideoData *) SDL_calloc(1, sizeof(SDL_VideoData));
-    if (viddata == NULL) {
+    if (!viddata) {
         SDL_OutOfMemory();
         goto cleanup;
     }
@@ -231,9 +231,9 @@ KMSDRM_Create(int devindex)
     return device;
 
 cleanup:
-    if (device != NULL)
+    if (device)
         SDL_free(device);
-    if (viddata != NULL)
+    if (viddata)
         SDL_free(viddata);
     return NULL;
 }
@@ -358,7 +358,7 @@ KMSDRM_VideoInit(_THIS)
 
     /* Allocate display internal data */
     SDL_DisplayData *dispdata = (SDL_DisplayData *) SDL_calloc(1, sizeof(SDL_DisplayData));
-    if (dispdata == NULL) {
+    if (!dispdata) {
         return SDL_OutOfMemory();
     }
 
@@ -366,7 +366,7 @@ KMSDRM_VideoInit(_THIS)
 
     /* Open /dev/dri/cardNN */
     devname = (char *) SDL_calloc(1, 16);
-    if (devname == NULL) {
+    if (!devname) {
         ret = SDL_OutOfMemory();
         goto cleanup;
     }
@@ -382,7 +382,7 @@ KMSDRM_VideoInit(_THIS)
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Opened DRM FD (%d)", viddata->drm_fd);
 
     viddata->gbm = KMSDRM_gbm_create_device(viddata->drm_fd);
-    if (viddata->gbm == NULL) {
+    if (!viddata->gbm) {
         ret = SDL_SetError("Couldn't create gbm device.");
         goto cleanup;
     }
@@ -396,7 +396,7 @@ KMSDRM_VideoInit(_THIS)
 
     for (i = 0; i < resources->count_connectors; i++) {
         connector = KMSDRM_drmModeGetConnector(viddata->drm_fd, resources->connectors[i]);
-        if (connector == NULL)
+        if (!connector)
             continue;
 
         if (connector->connection == DRM_MODE_CONNECTED &&
@@ -421,7 +421,7 @@ KMSDRM_VideoInit(_THIS)
     for (i = 0; i < resources->count_encoders; i++) {
         encoder = KMSDRM_drmModeGetEncoder(viddata->drm_fd, resources->encoders[i]);
 
-        if (encoder == NULL)
+        if (!encoder)
             continue;
 
         if (encoder->encoder_id == connector->encoder_id) {
@@ -453,7 +453,7 @@ KMSDRM_VideoInit(_THIS)
 
     viddata->saved_crtc = KMSDRM_drmModeGetCrtc(viddata->drm_fd, encoder->crtc_id);
 
-    if (viddata->saved_crtc == NULL) {
+    if (!viddata->saved_crtc) {
         for (i = 0; i < resources->count_crtcs; i++) {
             if (encoder->possible_crtcs & (1 << i)) {
                 encoder->crtc_id = resources->crtcs[i];
@@ -464,7 +464,7 @@ KMSDRM_VideoInit(_THIS)
         }
     }
 
-    if (viddata->saved_crtc == NULL) {
+    if (!viddata->saved_crtc) {
         ret = SDL_SetError("No CRTC found.");
         goto cleanup;
     }
@@ -520,21 +520,21 @@ KMSDRM_VideoInit(_THIS)
     return ret;
 
 cleanup:
-    if (encoder != NULL)
+    if (encoder)
         KMSDRM_drmModeFreeEncoder(encoder);
-    if (connector != NULL)
+    if (connector)
         KMSDRM_drmModeFreeConnector(connector);
-    if (resources != NULL)
+    if (resources)
         KMSDRM_drmModeFreeResources(resources);
 
     if (ret != 0) {
         /* Error (complete) cleanup */
         SDL_free(dispdata);
-        if(viddata->saved_crtc != NULL) {
+        if (viddata->saved_crtc) {
             KMSDRM_drmModeFreeCrtc(viddata->saved_crtc);
             viddata->saved_crtc = NULL;
         }
-        if (viddata->gbm != NULL) {
+        if (viddata->gbm) {
             KMSDRM_gbm_device_destroy(viddata->gbm);
             viddata->gbm = NULL;
         }
@@ -557,8 +557,8 @@ KMSDRM_VideoQuit(_THIS)
         SDL_GL_UnloadLibrary();
     }
 
-    if(viddata->saved_crtc != NULL) {
-        if(viddata->drm_fd >= 0 && viddata->saved_conn_id > 0) {
+    if (viddata->saved_crtc) {
+        if (viddata->drm_fd >= 0 && viddata->saved_conn_id > 0) {
             /* Restore saved CRTC settings */
             drmModeCrtc *crtc = viddata->saved_crtc;
             if(KMSDRM_drmModeSetCrtc(viddata->drm_fd, crtc->crtc_id, crtc->buffer_id,
@@ -570,7 +570,7 @@ KMSDRM_VideoQuit(_THIS)
         KMSDRM_drmModeFreeCrtc(viddata->saved_crtc);
         viddata->saved_crtc = NULL;
     }
-    if (viddata->gbm != NULL) {
+    if (viddata->gbm) {
         KMSDRM_gbm_device_destroy(viddata->gbm);
         viddata->gbm = NULL;
     }
@@ -607,7 +607,7 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
 
     /* Allocate window internal data */
     windata = (SDL_WindowData *) SDL_calloc(1, sizeof(SDL_WindowData));
-    if (windata == NULL) {
+    if (!windata) {
         SDL_OutOfMemory();
         goto error;
     }
@@ -662,12 +662,12 @@ KMSDRM_CreateWindow(_THIS, SDL_Window * window)
     return 0;
 
 error:
-    if (windata != NULL) {
+    if (windata) {
 #if SDL_VIDEO_OPENGL_EGL
         if (windata->egl_surface != EGL_NO_SURFACE)
             SDL_EGL_DestroySurface(_this, windata->egl_surface);
 #endif /* SDL_VIDEO_OPENGL_EGL */
-        if (windata->gs != NULL)
+        if (windata->gs)
             KMSDRM_gbm_surface_destroy(windata->gs);
         SDL_free(windata);
     }
@@ -681,11 +681,11 @@ KMSDRM_DestroyWindow(_THIS, SDL_Window * window)
     if(windata) {
         /* Wait for any pending page flips and unlock buffer */
         KMSDRM_WaitPageFlip(_this, windata, -1);
-        if (windata->curr_bo != NULL) {
+        if (windata->curr_bo) {
             KMSDRM_gbm_surface_release_buffer(windata->gs, windata->curr_bo);
             windata->curr_bo = NULL;
         }
-        if (windata->next_bo != NULL) {
+        if (windata->next_bo) {
             KMSDRM_gbm_surface_release_buffer(windata->gs, windata->next_bo);
             windata->next_bo = NULL;
         }
@@ -695,7 +695,7 @@ KMSDRM_DestroyWindow(_THIS, SDL_Window * window)
             SDL_EGL_DestroySurface(_this, windata->egl_surface);
         }
 #endif /* SDL_VIDEO_OPENGL_EGL */
-        if (windata->gs != NULL) {
+        if (windata->gs) {
             KMSDRM_gbm_surface_destroy(windata->gs);
             windata->gs = NULL;
         }

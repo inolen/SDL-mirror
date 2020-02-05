@@ -75,7 +75,7 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
     }
 
     /* Release the previous front buffer */
-    if (windata->curr_bo != NULL) {
+    if (windata->curr_bo) {
         KMSDRM_gbm_surface_release_buffer(windata->gs, windata->curr_bo);
         /* SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Released GBM surface %p", (void *)windata->curr_bo); */
         windata->curr_bo = NULL;
@@ -91,7 +91,7 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
 
     /* Lock the next front buffer so it can't be allocated as a back buffer */
     windata->next_bo = KMSDRM_gbm_surface_lock_front_buffer(windata->gs);
-    if (windata->next_bo == NULL) {
+    if (!windata->next_bo) {
         SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Could not lock GBM surface front buffer");
         return 0;
     /* } else {
@@ -99,11 +99,11 @@ KMSDRM_GLES_SwapWindow(_THIS, SDL_Window * window) {
     }
 
     fb_info = KMSDRM_FBFromBO(_this, windata->next_bo);
-    if (fb_info == NULL) {
+    if (!fb_info) {
         return 0;
     }
 
-    if (windata->curr_bo == NULL) {
+    if (!windata->curr_bo) {
         /* On the first swap, immediately present the new front buffer. Before
            drmModePageFlip can be used the CRTC has to be configured to use
            the current connector and mode with drmModeSetCrtc */
